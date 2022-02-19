@@ -1,0 +1,62 @@
+model: &model
+  name: mln
+  num_classes: 100
+  mol_params:
+    h_dim: 2048
+    use_bn: true
+    k: 12
+    sig_min: 1
+    sig_max: 2
+    mu_min: -2
+    mu_max: 2
+    share_sig: true
+  backbone_params:
+    name: resnet50
+    pretrained: true
+  checkpoint_path: ''
+
+train: &train
+  num_epochs: 80
+
+  optimizer: &optimizer
+    name: sgd
+    lr: 0.01
+    momentum: 0.9
+    nesterov: True
+    weight_decay: 0.0001
+
+  optimizer1: &optimizer1
+    name: sgd
+    lr: 0.001
+    momentum: 0.9
+    nesterov: True
+    weight_decay: 0.0005
+
+  optimizer2: &optimizer2
+    name: sgd
+    lr: 0.01
+    momentum: 0.9
+    nesterov: True
+    weight_decay: 0.0005
+
+  criterion: &criterion
+    name: mace
+
+  lr_schedule: &lr_schedule
+    name: custom
+    milestones: [15, 30, 45, 60]
+    gamma: 0.3
+
+eval: &eval
+  standard: accuracy
+
+data: &data
+  name: 'OpenImages30k'
+  root: 'data/OpenImages30k'
+  batch_size: 24
+  num_workers: 4
+
+  transform: &transform
+    image_size: 256
+    train_crop_size: 224
+    val_crop_size: 224

@@ -1,0 +1,47 @@
+model: &model
+  name: mln
+  num_classes: 200
+  mol_params:
+    h_dim: 512
+    use_bn: true
+    k: 5
+    sig_min: 1
+    sig_max: 2
+    mu_min: -2
+    mu_max: 2
+    share_sig: true
+  backbone_params:
+    name: resnet18
+    pretrained: true
+  checkpoint_path: ''
+
+train: &train
+  num_epochs: 30
+
+  optimizer: &optimizer
+    name: sgd
+    lr: 0.1
+    momentum: 0.9
+    nesterov: True
+    weight_decay: 0.0005
+
+  criterion: &criterion
+    name: mace
+
+  lr_schedule: &lr_schedule
+    name: custom
+    milestones: [10,20]
+    gamma: 0.2
+
+eval: &eval
+  standard: accuracy
+
+data: &data
+  name: 'mnist'
+  root: 'data'
+  batch_size: 512
+  num_workers: 0
+
+  transform: &transform
+    image_size: 256
+    crop_size: 224
