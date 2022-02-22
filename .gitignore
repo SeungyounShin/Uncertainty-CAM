@@ -8,6 +8,7 @@ ckpt_imagenet_noise/
 ckpt_imagenet_vit/
 ckpt_feat/
 ckpt_cub/
+ckpt_uncertainty_mask/
 notebook_test/
 notebooks/example_images/
 notebooks/__pycache__/
