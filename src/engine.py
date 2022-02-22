@@ -5,6 +5,7 @@ import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
 from src.utils import util, metrics
+from src.utils.util import *
 from src.core.criterions import mln_uncertainties
 from src.builders import model_builder, dataloader_builder, checkpointer_builder,\
                          optimizer_builder, criterion_builder, scheduler_builder,\
@@ -20,6 +21,7 @@ class BaseEngine(object):
         # Load configurations
         config = util.load_config(config_path)
 
+        self.config = config
         self.model_config = config['model']
         self.train_config = config['train']
         self.eval_config = config['eval']
@@ -53,6 +55,7 @@ class Engine(BaseEngine):
 
     def define(self):
         # Build a dataloader
+        self.uncertainty_mask = False
         self.logger.info("Build a dataloader")
         self.dataloaders = dataloader_builder.build(
             self.data_config, self.logger)
@@ -60,28 +63,50 @@ class Engine(BaseEngine):
         self.logger.info("Build a model")
         # Build a model`
         self.model = model_builder.build(
-            self.model_config, self.logger)
+            self.model_config, self.logger, True)
+        try:
+            self.logger.info("Train with Uncertainty mask")
+            self.model_config2 = self.config['model2']
+            self.uncertainty_mask = True
+            ## model2 is just ResNet
+            self.model2 = model_builder.build(
+                self.model_config2, self.logger, False)
+        except:
+            self.logger.warn("Without Uncertainty Mask - Train only MLN")
+            self.uncertainty_mask = False
 
         # Use multi GPUs if available
         if torch.cuda.device_count() > 1:
             self.logger.info("Using multi-GPU")
             self.model = util.DataParallel(self.model)
+            if self.uncertainty_mask:
+                self.model2 = util.DataParallel(self.model2)
         self.model.to(self.device)
+        if self.uncertainty_mask:
+            self.model2.to(self.device)
 
         self.logger.info("Build a Optimizer, Scheduler etc...")
         # Build an optimizer, scheduler and criterion
         self.optimizer = optimizer_builder.build(
             self.train_config['optimizer'], self.model.parameters(), self.logger)
 
-
         self.scheduler = scheduler_builder.build(
             self.train_config, self.optimizer, self.logger)
-        self.criterion = criterion_builder.build(
-            self.train_config, self.model_config, self.data_config, self.device, self.logger)
+        if self.uncertainty_mask:
+            self.criterion = criterion_builder.build(
+                self.train_config, self.model_config, self.data_config, self.device, self.logger)
+        else:
+            self.criterion = criterion_builder.build(
+                self.train_config, self.model_config, self.data_config, self.device, self.logger)
         self.loss_meter = meter_builder.build(
             len(self.dataloaders['train']), self.logger)
 
         # Build a checkpointer
+        if self.uncertainty_mask:
+            self.checkpointer2 = checkpointer_builder.build(
+                self.save_dir, self.logger, self.model2, self.optimizer,
+                self.scheduler)
+
         self.checkpointer = checkpointer_builder.build(
             self.save_dir, self.logger, self.model, self.optimizer,
             self.scheduler)
@@ -89,8 +114,13 @@ class Engine(BaseEngine):
         self.misc = self.checkpointer.load(checkpoint_path)
 
         # Build a localizer and evaluator
-        self.localizer = localizer_builder.build(
-            self.model, self.criterion, self.eval_config, self.logger, self.device)
+        if self.uncertainty_mask:
+            self.logger.info("Localizer for Uncertainty Mask")
+            self.localizer = localizer_builder.build(
+                self.model, MaceCriterion(1000, self.device, False), self.eval_config, self.logger, self.device)
+        else:
+            self.localizer = localizer_builder.build(
+                self.model, self.criterion, self.eval_config, self.logger, self.device)
         self.evaluators = evaluator_builder.build(
             self.eval_config, self.data_config, self.logger)
 
@@ -108,7 +138,10 @@ class Engine(BaseEngine):
         for epoch in range(start_epoch, start_epoch + num_epochs):
             # training phase
             train_start = time.time()
-            num_steps = self._train_one_epoch(epoch, num_steps)
+            if self.uncertainty_mask:
+                num_steps = self._train_one_epoch_uncertainty_mask(epoch, num_steps)
+            else:
+                num_steps = self._train_one_epoch(epoch, num_steps)
             train_time = time.time() - train_start
 
             lr = self.scheduler.get_lr()[0]
@@ -125,12 +158,18 @@ class Engine(BaseEngine):
             torch.cuda.empty_cache()
 
             if epoch%10==0:
-                val_metric = self._validate_once(epoch)
+                if self.uncertainty_mask:
+                    val_metric = self._validate_once_uncertainty_mask(epoch)
+                else:
+                    val_metric = self._validate_once(epoch)
                 self.logger.infov('[Epoch {}] classification performance: {:4f}'.format(epoch, val_metric))
 
                 if val_metric > best_val_metric:
                     best_val_metric = val_metric
-                    self.checkpointer.save(epoch, num_steps, val_metric=val_metric)
+                    if self.uncertainty_mask:
+                        self.checkpointer2.save(epoch, num_steps, val_metric=val_metric)
+                    else:
+                        self.checkpointer.save(epoch, num_steps, val_metric=val_metric)
                 #self.checkpointer.save(epoch, num_steps, val_metric=0)
 
         # test phase
@@ -201,8 +240,66 @@ class Engine(BaseEngine):
             'Train/loss', self.loss_meter.loss, global_step=num_steps)
         return num_steps
 
+    def _train_one_epoch_uncertainty_mask(self,epoch,num_steps):
+        dataloader = self.dataloaders['train']
 
-    def _validate_once(self, epoch):
+        correct = 0
+        train_num = 0
+        self.model.train()
+        self.model2.train()
+        for i, (images, labels) in enumerate(dataloader):
+
+            batch_size = images.shape[0]
+            images = images.to(self.device)
+            labels = labels.to(self.device)
+
+            # Get Alea Activation Map
+            self.localizer.register_hooks()
+            self.localizer.model_ext.loss_type= 'alea_avg'
+            cams = self.localizer.localize(torch.tensor(images).to(self.device).float() )
+            self.localizer.remove_hooks()
+            cams = cams.cpu().detach().squeeze().numpy()
+
+            torch.cuda.empty_cache()
+            # Get Blurred Images
+            origin_img = images.permute(0,2,3,1).detach().cpu()*torch.tensor([0.229, 0.224, 0.225]) + torch.tensor([0.485, 0.456, 0.406])
+            origin_img = origin_img.cpu()
+            AleaBlured = getBlurAlea(cams, origin_img, ratio=7, mask_ratio=0.4)
+            AleaBlured = torch.stack(AleaBlured).cpu().permute(0,3,1,2).float()
+
+            # Forward propagation
+            pred = self.model2(AleaBlured.to(self.device))
+            output_dict = dict()
+            output_dict['preds'] = pred
+            output_dict['labels'] = labels
+
+            # Compute losses
+            losses = self.criterion(output_dict)
+
+            loss = losses['loss']
+
+            preds = output_dict['preds']
+            correct += torch.sum(torch.argmax(preds,dim=-1) == labels).cpu()
+            train_num += labels.size(0)
+            acc = torch.sum(torch.argmax(preds,dim=-1) == labels).cpu()/float(labels.size(0))
+            #acc = 0
+
+            # Backward propagation
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            # Print losses
+            meter_dict = {'loss' : loss.item(), 'acc' : acc}
+            self.loss_meter.update(meter_dict, batch_size)
+            self.loss_meter.print_log(meter_dict, epoch, i)
+            num_steps += batch_size
+
+        self.writer.add_scalar(
+            'Train/loss', self.loss_meter.loss, global_step=num_steps)
+
+
+    def _validate_once_uncertainty_mask(self, epoch):
         dataloader = self.dataloaders['val']
         num_batches = len(dataloader)
 
@@ -271,6 +368,47 @@ class Engine(BaseEngine):
         """
 
         return metric
+
+        def _validate_once(self, epoch):
+            dataloader = self.dataloaders['val']
+            num_batches = len(dataloader)
+
+            self.model.eval()
+            self.localizer.register_hooks()
+            correct = list()
+            valid_num =0
+
+            with torch.no_grad():
+                for i, (images, labels) in enumerate(dataloader):
+                    images = images.to(self.device)
+                    labels = labels.to(self.device)
+
+                    # Forward propagation
+                    preds = self.model2(images)
+
+                    batch_size = images.size(0)
+
+                    correct += list((torch.argmax(preds,dim=-1) == labels).cpu().numpy())
+                    valid_num += labels.size(0)
+                    #correct.append(torch.max(preds.detach().cpu(),dim=-1)[-1].cpu() == labels.cpu())
+
+                    # VOC background to zero
+                    #labels[:,0] = 0.
+
+                    self.evaluators['classification'].accumulate(preds, labels)
+
+                    self.logger.info('[Epoch {}] Evaluation batch {}/{}'.format(
+                        epoch, i+1, num_batches))
+
+            # Compute the classification result
+            metric = self.evaluators['classification'].compute()
+            self.evaluators['classification'].reset()
+            self.localizer.remove_hooks()
+
+            meter_dict = {'acc' : sum(correct)/len(correct)}
+            self.loss_meter.print_log(meter_dict, epoch, i)
+
+            return metric
 
 
     def _test_once(self):

@@ -9,6 +9,7 @@ ckpt_imagenet_vit/
 ckpt_feat/
 ckpt_cub/
 notebook_test/
+notebooks/example_images/
 notebooks/__pycache__/
 notebooks/.ipynb_checkpoints/
 .ipynb_checkpoints/

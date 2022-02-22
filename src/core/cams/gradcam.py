@@ -18,6 +18,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from math import isclose
 from src.utils.util import mln_gather,DataParallel
+from src.core.criterions import *
 
 class GradCAMExtractor:
     #Extract tensors needed for Gradcam using hooks
@@ -29,6 +30,7 @@ class GradCAMExtractor:
             self.model = model
         self.criterion = criterion
         self.loss_type = loss_type
+        self.mace_criterion = MaceCriterion(num_classes=1000, device=device,is_multilabel=False)
         self.device = device
 
         self.features = None
@@ -79,7 +81,7 @@ class GradCAMExtractor:
         output_dict['labels'] = target_class
 
         if(self.loss_type in ['alea_avg','epis_avg']):
-            output_scalar = self.criterion(output_dict)[self.loss_type]
+            output_scalar = self.mace_criterion(output_dict)[self.loss_type]
             output_scalar = output_scalar
             #output_scalar = -1. * F.nll_loss(out, target_class.flatten(), reduction='sum')
         elif(self.loss_type=="second"):

@@ -27,8 +27,11 @@ def build(train_config, model_config, data_config, device, logger):
     if criterion_name == 'mace':
         criterion_params['num_classes'] = model_config['num_classes']
         criterion_params['device'] = device
+        criterion = CRITERIONS[criterion_name](**criterion_params)
 
-    criterion = CRITERIONS[criterion_name](**criterion_params)
+    else:
+        _ = criterion_params.pop('is_multilabel')
+        criterion = CRITERIONS[criterion_name](**criterion_params)
 
     logger.infov('Criterion is built.')
     return criterion

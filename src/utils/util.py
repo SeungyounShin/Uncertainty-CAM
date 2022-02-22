@@ -636,6 +636,19 @@ class DataParallel(torch.nn.DataParallel):
 # Data
 # ====
 
+def getBlurAlea(cams, origin_img, ratio=7, mask_ratio=0.2):
+    results = list()
+
+    for idx in range(cams.shape[0]):
+        alea_cam = cams[idx]
+        blur_img = cv2.GaussianBlur(origin_img[idx].numpy(),(0,0),ratio)
+        alea_mask = alea_cam> mask_ratio*np.max(alea_cam)
+        blur_part_alea = blur_img*(np.stack([alea_mask,alea_mask,alea_mask],axis=-1))
+        nonblur_part_alea = origin_img[idx]*(1-np.stack([alea_mask,alea_mask,alea_mask],axis=-1))
+        blur_alea = nonblur_part_alea + blur_part_alea
+        results.append(blur_alea)
+    return results
+
 def normalization_params():
 #CUB200
     mean = [0.485, 0.456, 0.406]

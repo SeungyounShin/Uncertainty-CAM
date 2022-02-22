@@ -53,7 +53,7 @@ eval: &eval
 data: &data
   name: 'ImageNet'
   root: '/data/opensets/imagenet-pytorch/'
-  batch_size: 4096
+  batch_size: 64
   num_workers: 4
 
   transform: &transform

@@ -8,9 +8,9 @@ from src.utils.util import load_log
 
 if __name__== '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config_path', default='./configs/mln_resnet18_imagenet.yml',
+    parser.add_argument('--config_path', default='./configs/uncertainty_mask.yml',
                         help="Path to a config")
-    parser.add_argument('--save_dir', default='./ckpt_imagenet_noise',
+    parser.add_argument('--save_dir', default='./ckpt_uncertainty_mask',
                         help='Path to dir to save checkpoints and logs')
     parser.add_argument('--gpu_device', default='cuda',
                         help='Device name for gpu')

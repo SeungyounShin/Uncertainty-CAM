@@ -15,7 +15,10 @@ class MultiMeter(object):
 
     def update(self, val_dict, batch_size):
         for meter in self.meters:
-            self.meters[meter].update(val_dict[meter], batch_size)
+            try:
+                self.meters[meter].update(val_dict[meter], batch_size)
+            except:
+                continue
 
     def print_log(self, val_dict, epoch, batch_idx):
         log = ''

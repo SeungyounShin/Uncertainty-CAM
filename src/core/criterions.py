@@ -88,6 +88,8 @@ class MaceCriterion(_Loss):
         ### self distributed labeling
         # target
         target_usq =  torch.unsqueeze(targets, 1) # [N x 1 x D]
+        if target_usq.dim() == 4:
+            target_usq = target_usq.squeeze(1)
         target_exp =  target_usq.expand_as(mu_hat) # [N x K x D]
 
         #if self.is_multilabel:
