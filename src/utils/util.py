@@ -218,7 +218,7 @@ def matrix_calc_cutout(cams, masks, metric='ioa'):
 
     return matrix
 
-def calc_mat33(engine, voc_dataset,threshold=0.9):
+def calc_mat33(engine, voc_dataset,threshold=0.9, uncertainty_type='mixture_entropy'):
     confusion_mat = np.zeros((3,3))
 
     return_list = list()
@@ -239,7 +239,7 @@ def calc_mat33(engine, voc_dataset,threshold=0.9):
             output_dict = engine.model(inpt.cuda().float())
         pi, mu, sigma = output_dict['pi'],output_dict['mu'],output_dict['sigma']
         largest_pi_ind = torch.argmax(pi)
-        unct_out = mln_uncertainties(pi, mu, sigma)
+        unct_out = mln_uncertainties(pi, mu, sigma, uncertainty_type)
         alea , epis = float(unct_out['alea']), float(unct_out['epis'])
         sel_out = mln_gather(output_dict)
         mu_sel = sel_out['mu_sel'].cpu()

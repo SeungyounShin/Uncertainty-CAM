@@ -167,6 +167,15 @@ def mln_uncertainties(pi, mu, sigma, alea_type='entropy'):
             mu_gather = mu_gather.unsqueeze(0)
         imp_label = torch.max(mu_gather, dim=-1)[-1]
         alea = torch.nn.functional.cross_entropy(mu_gather , imp_label ,reduce=False)
+    elif alea_type == "mixture_entropy":
+        pi_usq = torch.unsqueeze(pi, 2) # [N x K x 1]
+        pi_exp = pi_usq.expand_as(mu) # [N x K x D]
+        # mu [N x K x D]
+        log_entropy = -mu*torch.log(mu + 1e-6) # [N x K x D]
+        mace_exp = torch.mul(pi_exp, log_entropy)
+        mace = torch.sum(mace_exp, dim=1)     # [N x D]
+        mace = torch.sum(mace, dim=1)         # [N]
+        alea = torch.mean(mace)               # [1]
     else:
         alea = torch.sum(torch.mul(pi_exp, sigma), dim=1)  # [N x D]
         alea = torch.sqrt(torch.mean(alea,dim=1) + 1e-4) # [N]

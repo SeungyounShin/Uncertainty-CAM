@@ -3,6 +3,7 @@ import torch
 import time
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
+import matplotlib.pyplot as plt
 
 from src.utils import util, metrics
 from src.utils.util import *
@@ -64,16 +65,16 @@ class Engine(BaseEngine):
         # Build a model`
         self.model = model_builder.build(
             self.model_config, self.logger, True)
-        try:
-            self.logger.info("Train with Uncertainty mask")
-            self.model_config2 = self.config['model2']
-            self.uncertainty_mask = True
-            ## model2 is just ResNet
-            self.model2 = model_builder.build(
-                self.model_config2, self.logger, False)
-        except:
-            self.logger.warn("Without Uncertainty Mask - Train only MLN")
-            self.uncertainty_mask = False
+        #try:
+        self.model_config2 = self.config['model2']
+        ## model2 is just ResNet
+        self.model2 = model_builder.build(
+            self.model_config2, self.logger, False)
+        self.logger.info("Train with Uncertainty mask")
+        self.uncertainty_mask = True
+        #except:
+        #    self.logger.warn("Without Uncertainty Mask - Train only MLN")
+        #    self.uncertainty_mask = False
 
         # Use multi GPUs if available
         if torch.cuda.device_count() > 1:
@@ -106,6 +107,8 @@ class Engine(BaseEngine):
             self.checkpointer2 = checkpointer_builder.build(
                 self.save_dir, self.logger, self.model2, self.optimizer,
                 self.scheduler)
+            if self.config['model2']['checkpoint_path'] != '':
+                _ = self.checkpointer2.load(self.config['model2']['checkpoint_path'])
 
         self.checkpointer = checkpointer_builder.build(
             self.save_dir, self.logger, self.model, self.optimizer,
@@ -244,6 +247,7 @@ class Engine(BaseEngine):
         dataloader = self.dataloaders['train']
 
         correct = 0
+        correct2 = 0
         train_num = 0
         self.model.train()
         self.model2.train()
@@ -266,6 +270,8 @@ class Engine(BaseEngine):
             origin_img = origin_img.cpu()
             AleaBlured = getBlurAlea(cams, origin_img, ratio=7, mask_ratio=0.4)
             AleaBlured = torch.stack(AleaBlured).cpu().permute(0,3,1,2).float()
+            AleaBlured = (AleaBlured - torch.tensor([0.485, 0.456, 0.406]).repeat(1,1,1,1).permute(0,3,1,2))
+            AleaBlured = AleaBlured/torch.tensor([0.229, 0.224, 0.225]).repeat(1,1,1,1).permute(0,3,1,2)
 
             # Forward propagation
             pred = self.model2(AleaBlured.to(self.device))
@@ -279,7 +285,7 @@ class Engine(BaseEngine):
             loss = losses['loss']
 
             preds = output_dict['preds']
-            correct += torch.sum(torch.argmax(preds,dim=-1) == labels).cpu()
+            correct  += torch.sum(torch.argmax(preds,dim=-1) == labels).cpu()
             train_num += labels.size(0)
             acc = torch.sum(torch.argmax(preds,dim=-1) == labels).cpu()/float(labels.size(0))
             #acc = 0
@@ -297,6 +303,7 @@ class Engine(BaseEngine):
 
         self.writer.add_scalar(
             'Train/loss', self.loss_meter.loss, global_step=num_steps)
+        return num_steps
 
 
     def _validate_once_uncertainty_mask(self, epoch):
@@ -304,7 +311,7 @@ class Engine(BaseEngine):
         num_batches = len(dataloader)
 
         self.model.eval()
-        self.localizer.register_hooks()
+        self.model2.eval()
         epis = list()
         alea = list()
         correct = list()
@@ -316,41 +323,31 @@ class Engine(BaseEngine):
                 labels = labels.to(self.device)
 
                 # Forward propagation
-                output_dict = self.model(images)
-                unc_out = mln_uncertainties(output_dict['pi'].detach().cpu(),output_dict['mu'].detach().cpu(),output_dict['sigma'].detach().cpu())
-                #print(unc_out)
+                pred = self.model2(images.to(self.device))
+                output_dict = dict()
+                output_dict['preds'] = pred
+                output_dict['labels'] = labels
 
-                #cams = self.localizer.localize(images, labels)
-
-                # Accumulate the classification results
-                batch_size = images.size(0)
-                preds = util.mln_gather(output_dict)['mu_sel']
-
-                epis.append(unc_out['epis'].cpu())
-                alea.append(unc_out['alea'].cpu())
-
-                correct += list((torch.argmax(preds,dim=-1) == labels).cpu().numpy())
+                correct += torch.sum(torch.argmax(pred,dim=-1) == labels).cpu().numpy()
                 valid_num += labels.size(0)
+
                 #correct.append(torch.max(preds.detach().cpu(),dim=-1)[-1].cpu() == labels.cpu())
 
                 # VOC background to zero
                 #labels[:,0] = 0.
 
-                self.evaluators['classification'].accumulate(preds, labels)
+                self.evaluators['classification'].accumulate(pred, labels)
 
                 self.logger.info('[Epoch {}] Evaluation batch {}/{}'.format(
                     epoch, i+1, num_batches))
 
-        epis = torch.cat(epis)
-        alea = torch.cat(alea)
         #correct = torch.cat(correct)
 
         # Compute the classification result
         metric = self.evaluators['classification'].compute()
         self.evaluators['classification'].reset()
-        self.localizer.remove_hooks()
 
-        meter_dict = {'acc' : sum(correct)/len(correct)}
+        meter_dict = {'acc' : correct/valid_num}
         self.loss_meter.print_log(meter_dict, epoch, i)
 
         #figure save

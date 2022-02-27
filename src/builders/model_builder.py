@@ -16,10 +16,11 @@ BACKBONES = {
 }
 
 def build(model_config, logger, mln=True):
-    model_name = model_config['name']
-    num_classes = model_config['num_classes']
 
     if mln:
+        model_name = model_config['name']
+        num_classes = model_config['num_classes']
+
         model_params = model_config['mol_params'].copy()
         backbone_params = model_config.get('backbone_params', None)
 
